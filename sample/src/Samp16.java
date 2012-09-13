@@ -2,39 +2,14 @@ import java.net.*;
 import java.io.*;
 
 public class Samp16 {
-	// スタート状態とPCのMAC要求コマンド
-	byte[] REQUIRE_MAC = {(byte) 0x02, (byte) 0x01, (byte) 0x5b, (byte) 0x00, (byte) 0x00};
-	// 記録間隔（高速側）の設定を取得
-	byte[] SAMP = {(byte) 0x02, (byte) 0x20, (byte) 0x01, (byte) 0x00, (byte) 0x00};
-	// 記録間隔（高速側）を10msに設定
-	byte[] SAMP_10ms = {(byte) 0x02, (byte) 0x20, (byte) 0x01, (byte) 0x00, (byte) 0x01, (byte) 0x00};
-	// 記録間隔（高速側）を50msに設定
-	byte[] SAMP_50ms = {(byte) 0x02, (byte) 0x20, (byte) 0x01, (byte) 0x00, (byte) 0x01, (byte) 0x02};
-	// 記録間隔（高速側）を100msに設定
-	byte[] SAMP_100ms = {(byte) 0x02, (byte) 0x20, (byte) 0x01, (byte) 0x00, (byte) 0x01, (byte) 0x03};
-	// スタートコマンド(後ろ6バイトはPCのMACアドレス)
-	byte[] START = {(byte) 0x02, (byte) 0x01, (byte) 0x50, (byte) 0x00, (byte) 0x06
-			, (byte) 0x00, (byte) 0x1a, (byte) 0x4d, (byte) 0x5b, (byte) 0x15, (byte) 0x3c};
-	// メモリ内先頭番号、データ数要求コマンド1st（高速）
-	byte[] REQUIRE_MEMORY = {(byte) 0x02, (byte) 0x01, (byte) 0x53, (byte) 0x00, (byte) 0x00};
-	// 測定状態要求コマンド
-	byte[] REQUIRE_STATE = {(byte) 0x02, (byte) 0x01, (byte) 0x57, (byte) 0x00, (byte) 0x00};
-	// アプリシステムトリガコマンド
-	byte[] SYSTRIGGER = {(byte) 0x02, (byte) 0x01, (byte) 0x58, (byte) 0x00, (byte) 0x09
-			, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00
-			, (byte) 0x00};
-	// データ要求コマンド1st（高速）
-	byte[] REQUIRE_DATA = {(byte) 0x02, (byte) 0x01, (byte) 0x55, (byte) 0x00, (byte) 0x10
-			, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00
-			, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x01};
-	// ストップコマンド
-	byte[] STOP = {(byte) 0x02, (byte) 0x01, (byte) 0x51, (byte) 0x00, (byte) 0x00};
 	
-	String hostname = "192.168.172.2";
-	int port = 8802;
+	static final String HOSTNAME = "192.168.172.2";
+	static final int PORT = 8802;
 	
-	int max_ch = 2;
-	int max_unit = 1;
+	// 計測するチャンネル数、ユニット数
+	// 変更する場合はメモリハイロガーを再設定する必要がある
+	static final int MAX_CH = 2;
+	static final int MAX_UNIT = 1;
 	
 	
 	public static void main(String[] args) {
@@ -45,7 +20,7 @@ public class Samp16 {
 	
 	private void communication() {
 		try{
-			Socket theSocket = new Socket(hostname, port);
+			Socket theSocket = new Socket(HOSTNAME, PORT);
 			
 			InputStream is;
 			InputStreamReader isr;
@@ -65,54 +40,45 @@ public class Samp16 {
 			
 			os = theSocket.getOutputStream();
 			
-			command(is, os, SAMP_50ms);
-			command(is, os, START);
-			Thread.sleep(1000);
+			//command(is, os, Command.SAMP_50ms);
+			
+			command(is, os, Command.START);
+			Thread.sleep(1000);	// 状態変化を待つ
 
 			int ret = -1;
 			while(ret != 65){
-				ret = command(is, os, REQUIRE_STATE, false);
+				ret = command(is, os, Command.REQUIRE_STATE, false);
 				System.out.print(".");
 			}
 			System.out.println("");
 			ret = -1;
 			
-			command(is, os, SYSTRIGGER);
-			Thread.sleep(1000);
+			command(is, os, Command.SYSTRIGGER);
+			Thread.sleep(1000);	// 状態変化を待つ
 			
 			while(ret != 35){
-				ret = command(is, os, REQUIRE_STATE, false);
+				ret = command(is, os, Command.REQUIRE_STATE, false);
 				System.out.print(".");
 			}
 			System.out.println("");
 			ret = -1;
 			
-			command(is, os, REQUIRE_MEMORY);
+			command(is, os, Command.REQUIRE_MEMORY);
 			
-			command(is, os, REQUIRE_DATA);
+			command(is, os, Command.REQUIRE_DATA);
 			
-			//データ取得5-12
-			//int j = 1;
-			byte[] req = REQUIRE_DATA;
+			// データ要求コマンド
+			// [5]-[12]：サンプリング番号
+			byte[] req = Command.REQUIRE_DATA;
 			
+			// データ取得
 			while(is.available() == 0);
 			byte[] rec = new byte[is.available()];
 			for(int i = 0; i < 4095; i++){
 				is.read(rec);
 				readable(rec);
 				
-				/*
-				if(i < 256){
-					req[12] = (byte) i;
-				}else if(i < 65535){
-					if(i % 256 == 0){
-						req[11] = (byte) j;
-						j++;
-					}
-					req[12] = (byte) (i - 256 * j);
-				}
-				*/
-				
+				// サンプリング番号のインクリメント
 				for(int j = 12; j > 5; j--){
 					if(req[j] == 0xffffffff){
 						req[j] = 0x00000000;
@@ -128,15 +94,14 @@ public class Samp16 {
 					}
 				}
 				
-				
 				Thread.sleep(50);	// 測定間隔よりも速くならないように
 				command(is, os, req);
 			}
 			
-			command(is, os, STOP);
+			command(is, os, Command.STOP);
 			
 			while(ret != 0){
-				ret = command(is, os, REQUIRE_STATE, false);
+				ret = command(is, os, Command.REQUIRE_STATE, false);
 				System.out.print(".");
 			}
 			System.out.println("");
@@ -216,14 +181,14 @@ public class Samp16 {
 					int index = 21;
 					for(int unit = 1; unit < 9; unit++){
 						for(int ch = 1; ch < 17; ch++){
-							if(ch <= max_ch && unit <= max_unit)
+							if(ch <= MAX_CH && unit <= MAX_UNIT)
 								System.out.print("\tU" + unit + "CH" + ch + ":\t");
 							for(int i = 0; i < 4; i++){
-								if(ch <= max_ch && unit <= max_unit)
+								if(ch <= MAX_CH && unit <= MAX_UNIT)
 									System.out.print(Integer.toHexString(rec[index]) + " ");
 								index++;
 							}
-							if(ch <= max_ch && unit <= max_unit)
+							if(ch <= MAX_CH && unit <= MAX_UNIT)
 								System.out.println("");
 						}
 					}
@@ -400,14 +365,14 @@ public class Samp16 {
 					//int index = 21;
 					for(int unit = 1; unit < 9; unit++){
 						for(int ch = 1; ch < 17; ch++){
-							if(ch <= max_ch && unit <= max_unit);
+							if(ch <= MAX_CH && unit <= MAX_UNIT);
 								//System.out.print("\tU" + unit + "CH" + ch + ":\t");
 							for(int i = 0; i < 4; i++){
-								if(ch <= max_ch && unit <= max_unit);
+								if(ch <= MAX_CH && unit <= MAX_UNIT);
 									//System.out.print(Integer.toHexString(rec[index]) + " ");
 								//index++;
 							}
-							if(ch <= max_ch && unit <= max_unit);
+							if(ch <= MAX_CH && unit <= MAX_UNIT);
 								//System.out.println("");
 						}
 					}
