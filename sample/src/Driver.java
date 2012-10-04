@@ -7,7 +7,7 @@ public class Driver {
 	
 	static final String HOSTNAME = "192.168.172.2";
 	static final int PORT = 8802;
-	static int INTERVAL = 100;
+	static final int INTERVAL = 10;	// (TODO) 遅延を少なくするように動的に設定
 	
 	// 計測するチャンネル数、ユニット数
 	// 変更する場合はメモリハイロガーを再設定する必要がある
@@ -26,6 +26,8 @@ public class Driver {
 	
 	private byte[] req;	// データ要求コマンド
 	private byte[] raw;	// 電圧の生データ
+	private int intrval = INTERVAL;
+	private long count = 0;
 	
 	
 	public static void main(String[] args) {
@@ -38,6 +40,7 @@ public class Driver {
 	private void init() {
 		try{
 			theSocket = new Socket(HOSTNAME, PORT);
+			theSocket.setSoTimeout(INTERVAL + 1000);
 			
 			// ソケットオープン時の応答処理
 			is = theSocket.getInputStream();
@@ -108,7 +111,7 @@ public class Driver {
 	private void communication() {
 		init();
 		try{
-			while(true) {	// (TODO) 終了時、タイムアウト時の処理
+			while(true) {
 				getData();
 				for(int i = 0; 0 < power.size(); i++) {
 					System.out.println("消費電力" + (i + 1) + "：" + power.get(0) + "[W]");
@@ -119,13 +122,14 @@ public class Driver {
 		}catch(Exception e) {
 			e.printStackTrace();
 			System.exit(1);
+		}finally {
+			end();
 		}
-		end();
 	}
 	
 	
 	// コマンド実行
-	private byte[] command(byte[] msg) {		
+	private byte[] command(byte[] msg) {
 		sendMsg(msg);
 		return getMsg();
 	}
@@ -133,12 +137,27 @@ public class Driver {
 	
 	// MemoryHiLoggerから電圧データを受け取り消費電力を計算
 	private void getData() throws InterruptedException, IOException {
-		command(req);	// データ要求コマンド
-		is.read(raw);	// データ転送コマンドを受け取る
-		getVolt(raw);	// 受け取ったデータを電圧に変換
-		getPower();	// 電圧から消費電力を計算
-		incRequireCommand();	// データ要求時のサンプリング番号を１つ進める
-		Thread.sleep(INTERVAL);	// データの取得間隔
+		try {
+			byte[] rec = command(req);	// データ要求コマンド
+			/*
+			 * 遅延解消
+			if(getNumData(rec) - count > 100 && intrval > 0) {
+				intrval -= 1;
+			}else {
+				intrval = INTERVAL;
+				System.out.println(getNumData(rec) - count);
+			}
+			*/
+			is.read(raw);	// データ転送コマンドを受け取る
+			getVolt(raw);	// 受け取ったデータを電圧に変換
+			getPower();	// 電圧から消費電力を計算
+			incRequireCommand();	// データ要求時のサンプリング番号を１つ進める
+			Thread.sleep(intrval);	// データの取得間隔
+		}catch(Exception e) {
+			e.printStackTrace();
+			end();
+			System.exit(1);
+		}
 	}
 	
 	
@@ -163,6 +182,7 @@ public class Driver {
 			return rec;
 		}catch(Exception e) {
 			e.printStackTrace();
+			end();
 			System.exit(1);
 			return null;
 		}
@@ -174,13 +194,13 @@ public class Driver {
 		String raw = "";
 		int index = 21;
 		if(rec[0] == 0x01 && rec[1] == 0x00 && rec[2] == 0x01) {	// データ転送コマンド
-			for(int unit = 1; unit < 9; unit++) {	// (FIXME) MAX_CHを使う
+			for(int unit = 1; unit < 9; unit++) {
 				for(int ch = 1; ch < 17; ch++) {
 					for(int i = 0; i < 4; i++) {	// 個々の電圧
 						if(ch <= MAX_CH && unit <= MAX_UNIT) {
 							raw += String.format("%02x", rec[index]);
 						}
-					index++;
+						index++;
 					}
 					if(ch <= MAX_CH && unit <= MAX_UNIT) {
 						// 電圧値に変換(スライドp47)
@@ -206,7 +226,7 @@ public class Driver {
 			voltListSize--;
 		}
 		for(int i = 0; i < voltListSize; i += 2) {
-			// (TODO) どっちのチャンネルが12Vか5Vかを判別できるようにする必要がある
+			// (TODO) どっちのチャンネルが12Vか5Vなのかを判別できるようにする必要がある
 			power.add(Math.abs(volt.get(i)) * 120.0 + Math.abs(volt.get(i + 1)) * 50.0);
 		}
 	}
@@ -227,8 +247,25 @@ public class Driver {
 	}
 	
 	
+	// メモリ内データ数を取得
+	private long getNumData(byte[] rec) {
+		String raw = "";
+		if(rec[0] == 0x02 && rec[1] == 0x01) {
+			switch(rec[2]) {
+			case 0x55:
+				for(int i = 13; i < 21; i++) {
+					raw += String.format("%02x", rec[i]);
+				}
+				return Long.parseLong(raw, 16);
+			}
+		}
+		return -1;
+	}
+	
+	
 	// データ要求コマンドのサンプリング番号のインクリメント
 	private void incRequireCommand() {
+		count++;
 		for(int i = 12; i > 5; i--) {
 			if(req[i] == 0xffffffff) {
 				req[i] = 0x00000000;
